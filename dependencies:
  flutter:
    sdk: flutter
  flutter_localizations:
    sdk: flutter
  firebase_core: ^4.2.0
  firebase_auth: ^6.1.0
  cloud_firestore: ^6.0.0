@@ -1,0 +1,703 @@
+
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+const green = Color(0xFF128C55);
+const paleGreen = Color(0xFFE8F7EE);
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  runApp(const KaserApp());
+}
+
+class KaserApp extends StatefulWidget {
+  const KaserApp({super.key});
+
+  @override
+  State<KaserApp> createState() => _KaserAppState();
+}
+
+class _KaserAppState extends State<KaserApp> {
+  bool english = false;
+
+  String t(String ar, String en) => english ? en : ar;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'KASER APP',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: green,
+          primary: green,
+          surface: Colors.white,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF7FAF8),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: green,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: paleGreen),
+          ),
+        ),
+      ),
+      home: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+
+          if (snapshot.data == null) {
+            return LoginPage(
+              t: t,
+              onLanguage: () =>
+                  setState(() => english = !english),
+              english: english,
+            );
+          }
+
+          return HomePage(
+            t: t,
+            onLanguage: () =>
+                setState(() => english = !english),
+            english: english,
+          );
+        },
+      ),
+    );
+  }
+}
+
+typedef Translator = String Function(String ar, String en);
+
+class LoginPage extends StatefulWidget {
+  final Translator t;
+  final VoidCallback onLanguage;
+  final bool english;
+
+  const LoginPage({
+    super.key,
+    required this.t,
+    required this.onLanguage,
+    required this.english,
+  });
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final phone = TextEditingController();
+  final code = TextEditingController();
+  String? verificationId;
+  bool sending = false;
+  String? error;
+
+  @override
+  void dispose() {
+    phone.dispose();
+    code.dispose();
+    super.dispose();
+  }
+
+  Future<void> sendCode() async {
+    final number = phone.text.trim();
+    if (!number.startsWith('+') || number.length < 8) {
+      setState(() => error = widget.t(
+        'اكتب الرقم مع مفتاح الدولة، مثل +967',
+        'Enter the phone with country code, e.g. +967',
+      ));
+      return;
+    }
+
+    setState(() {
+      sending = true;
+      error = null;
+    });
+
+    try {
+      await FirebaseAuth.instance.verifyPhoneNumber(
+        phoneNumber: number,
+        timeout: const Duration(seconds: 60),
+        verificationCompleted: (credential) async {
+          await FirebaseAuth.instance.signInWithCredential(
+            credential,
+          );
+        },
+        verificationFailed: (e) {
+          if (mounted) {
+            setState(() => error = e.message ?? e.code);
+          }
+        },
+        codeSent: (id, resendToken) {
+          if (mounted) {
+            setState(() => verificationId = id);
+          }
+        },
+        codeAutoRetrievalTimeout: (id) {
+          verificationId = id;
+        },
+      );
+    } catch (e) {
+      setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
+  }
+
+  Future<void> verifyCode() async {
+    if (verificationId == null || code.text.trim().length < 4) {
+      setState(() => error = widget.t(
+        'اطلب الرمز أولًا واكتبه بشكل صحيح',
+        'Request and enter the verification code',
+      ));
+      return;
+    }
+
+    setState(() {
+      sending = true;
+      error = null;
+    });
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: verificationId!,
+        smsCode: code.text.trim(),
+      );
+      await FirebaseAuth.instance.signInWithCredential(credential);
+    } catch (_) {
+      setState(() => error = widget.t(
+        'الرمز غير صحيح أو انتهت صلاحيته',
+        'Invalid or expired verification code',
+      ));
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              children: [
+                Align(
+                  alignment: AlignmentDirectional.topEnd,
+                  child: TextButton(
+                    onPressed: widget.onLanguage,
+                    child: Text(widget.english ? 'العربية' : 'English'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: 104,
+                  height: 104,
+                  decoration: BoxDecoration(
+                    color: green,
+                    borderRadius: BorderRadius.circular(32),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x33128C55),
+                        blurRadius: 22,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.forum_rounded,
+                    color: Colors.white,
+                    size: 56,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'KASER APP',
+                  style: TextStyle(
+                    color: green,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(t(
+                  'تواصل مع العالم بطريقة جديدة',
+                  'Connect with the world',
+                )),
+                const SizedBox(height: 32),
+                TextField(
+                  controller: phone,
+                  keyboardType: TextInputType.phone,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.phone_android),
+                    labelText: t('رقم الهاتف الدولي', 'Phone number'),
+                    hintText: '+9677XXXXXXXX',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: sending ? null : sendCode,
+                    child: Text(t('إرسال رمز SMS', 'Send SMS code')),
+                  ),
+                ),
+                if (verificationId != null) ...[
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: code,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      labelText: t('رمز التحقق', 'Verification code'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: sending ? null : verifyCode,
+                      child: Text(t('تحقق ودخول', 'Verify and sign in')),
+                    ),
+                  ),
+                ],
+                if (sending) ...[
+                  const SizedBox(height: 16),
+                  const CircularProgressIndicator(),
+                ],
+                if (error != null) ...[
+                  const SizedBox(height: 16),
+                  Text(error!, style: const TextStyle(color: Colors.red)),
+                ],
+                const SizedBox(height: 24),
+                Text(
+                  t(
+                    'لن يظهر لك مستخدمون آخرون إلا بعد تسجيلهم في التطبيق.',
+                    'Other users appear after they register.',
+                  ),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class HomePage extends StatelessWidget {
+  final Translator t;
+  final VoidCallback onLanguage;
+  final bool english;
+
+  const HomePage({
+    super.key,
+    required this.t,
+    required this.onLanguage,
+    required this.english,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final me = FirebaseAuth.instance.currentUser!;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('KASER APP',
+                style: TextStyle(fontWeight: FontWeight.w900)),
+            Text('MESSAGES',
+                style: TextStyle(fontSize: 10, letterSpacing: 2)),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: t('تغيير اللغة', 'Change language'),
+            onPressed: onLanguage,
+            icon: const Icon(Icons.language),
+          ),
+          IconButton(
+            tooltip: t('خروج', 'Sign out'),
+            onPressed: () => FirebaseAuth.instance.signOut(),
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [green, Color(0xFF31AC70)],
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                children: [
+                  const CircleAvatar(
+                    backgroundColor: Colors.white,
+                    child: Icon(Icons.person, color: green),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(t('أهلًا بك في كاسر', 'Welcome to KASER'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            )),
+                        Text(me.phoneNumber ?? '',
+                            style: const TextStyle(color: Colors.white70)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.verified_user,
+                      color: Colors.white),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                t('الأشخاص المسجلون', 'Registered people'),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text(t(
+                      'تعذر تحميل المستخدمين. تحقق من إعداد Firebase.',
+                      'Could not load users. Check Firebase setup.',
+                    )),
+                  );
+                }
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final users = snapshot.data!.docs
+                    .where((doc) => doc.id != me.uid)
+                    .toList();
+
+                if (users.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        t(
+                          'لا يوجد مستخدمون آخرون حتى الآن. اطلب من صديق تثبيت التطبيق والتسجيل.',
+                          'No other users yet. Invite a friend to register.',
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+
+                return ListView.separated(
+                  itemCount: users.length,
+                  separatorBuilder: (_, __) =>
+                      const Divider(indent: 76, height: 1),
+                  itemBuilder: (context, index) {
+                    final doc = users[index];
+                    final data = doc.data();
+                    final phone = data['phone'] as String? ?? '';
+                    final name = data['name'] as String? ?? phone;
+
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      leading: const CircleAvatar(
+                        radius: 26,
+                        backgroundColor: paleGreen,
+                        child: Icon(Icons.person, color: green),
+                      ),
+                      title: Text(
+                        name,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(phone),
+                      trailing: const Icon(
+                        Icons.chat_bubble_rounded,
+                        color: green,
+                      ),
+                      onTap: () async {
+                        final ids = [me.uid, doc.id]..sort();
+                        final chatId = '${ids[0]}_${ids[1]}';
+                        final ref = FirebaseFirestore.instance
+                            .collection('chats')
+                            .doc(chatId);
+
+                        await ref.set({
+                          'members': ids,
+                          'updatedAt': FieldValue.serverTimestamp(),
+                        }, SetOptions(merge: true));
+
+                        if (!context.mounted) return;
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ChatPage(
+                              chatId: chatId,
+                              otherName: name,
+                              t: t,
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ChatPage extends StatefulWidget {
+  final String chatId;
+  final String otherName;
+  final Translator t;
+
+  const ChatPage({
+    super.key,
+    required this.chatId,
+    required this.otherName,
+    required this.t,
+  });
+
+  @override
+  State<ChatPage> createState() => _ChatPageState();
+}
+
+class _ChatPageState extends State<ChatPage> {
+  final input = TextEditingController();
+  bool sending = false;
+
+  @override
+  void dispose() {
+    input.dispose();
+    super.dispose();
+  }
+
+  Future<void> send() async {
+    final text = input.text.trim();
+    final me = FirebaseAuth.instance.currentUser;
+    if (text.isEmpty || me == null || sending) return;
+
+    setState(() => sending = true);
+    input.clear();
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final chat = db.collection('chats').doc(widget.chatId);
+
+      await chat.collection('messages').add({
+        'text': text,
+        'senderId': me.uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await chat.set({
+        'lastMessage': text,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {
+      input.text = text;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(widget.t(
+            'تعذر إرسال الرسالة. تحقق من الاتصال.',
+            'Message failed. Check your connection.',
+          ))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final me = FirebaseAuth.instance.currentUser!;
+
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            const CircleAvatar(
+              backgroundColor: Colors.white,
+              child: Icon(Icons.person, color: green),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(widget.otherName,
+                  overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('chats')
+                  .doc(widget.chatId)
+                  .collection('messages')
+                  .orderBy('createdAt', descending: true)
+                  .limit(100)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Text('تعذر تحميل الرسائل'),
+                  );
+                }
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final messages = snapshot.data!.docs;
+                if (messages.isEmpty) {
+                  return Center(
+                    child: Text(widget.t(
+                      'ابدأ أول محادثة 👋',
+                      'Say hello 👋',
+                    )),
+                  );
+                }
+
+                return ListView.builder(
+                  reverse: true,
+                  padding: const EdgeInsets.all(16),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final data = messages[index].data();
+                    final mine = data['senderId'] == me.uid;
+                    final body = data['text'] as String? ?? '';
+
+                    return Align(
+                      alignment: mine
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * .78,
+                        ),
+                        margin: const EdgeInsets.symmetric(vertical: 5),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 15,
+                          vertical: 11,
+                        ),
+                        decoration: BoxDecoration(
+                          color: mine ? paleGreen : Colors.white,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(18),
+                            topRight: const Radius.circular(18),
+                            bottomLeft: Radius.circular(mine ? 18 : 4),
+                            bottomRight: Radius.circular(mine ? 4 : 18),
+                          ),
+                          border: Border.all(
+                            color: mine
+                                ? const Color(0xFFD1EEDC)
+                                : const Color(0xFFE9EFEB),
+                          ),
+                        ),
+                        child: Text(body),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+              color: Colors.white,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: input,
+                      minLines: 1,
+                      maxLines: 5,
+                      textInputAction: TextInputAction.newline,
+                      decoration: InputDecoration(
+                        hintText: widget.t(
+                          'اكتب رسالتك...',
+                          'Type a message...',
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: sending ? null : send,
+                    style: IconButton.styleFrom(
+                      backgroundColor: green,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.send_rounded),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
